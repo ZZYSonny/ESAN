@@ -256,11 +256,14 @@ class EdgeDeleted(Graph2Subgraph):
 
 
 class NodeDeleted(Graph2Subgraph):
+    def select_nodes(self, data):
+        return range(data.num_nodes)
+
     def to_subgraphs(self, data):
         subgraphs = []
         all_nodes = torch.arange(data.num_nodes)
 
-        for i in range(data.num_nodes):
+        for i in self.select_nodes(data):
             subset = torch.cat([all_nodes[:i], all_nodes[i + 1:]])
             subgraph_edge_index, subgraph_edge_attr = subgraph(subset, data.edge_index, data.edge_attr,
                                                                relabel_nodes=False, num_nodes=data.num_nodes)
@@ -281,11 +284,14 @@ class EgoNets(Graph2Subgraph):
         self.num_hops = num_hops
         self.add_node_idx = add_node_idx
 
+    def select_nodes(self, data):
+        return range(data.num_nodes)
+
     def to_subgraphs(self, data):
 
         subgraphs = []
 
-        for i in range(data.num_nodes):
+        for i in self.select_nodes(data):
 
             _, _, _, edge_mask = k_hop_subgraph(i, self.num_hops, data.edge_index, relabel_nodes=False,
                                                 num_nodes=data.num_nodes)
@@ -521,6 +527,100 @@ class PTCDataset(InMemoryDataset):
 
         return {'train': torch.tensor(train_idx), 'valid': torch.tensor(test_idx), 'test': torch.tensor(test_idx)}
 
+from torch_geometric.utils import to_networkx
+from networkx.algorithms.components import biconnected_components
+
+def node_selection(data, policy):
+    graph_nx = to_networkx(data, to_undirected=True)
+    node_to_delete = None
+
+    if policy == 'large_degree':
+        node_to_delete = [
+            i
+            for i in range(data.num_nodes)
+            if graph_nx.degree[i] > 2
+        ]
+    elif policy == 'small_degree':
+        node_to_delete = [
+            i
+            for i in range(data.num_nodes)
+            if graph_nx.degree[i] <= 2
+        ]
+    elif policy == 'in_bcc':
+        bccs = list(biconnected_components(graph_nx))
+        bcc_non_trivial = [b for b in bccs if len(b)>2]
+        if len(bcc_non_trivial) == 0:
+            # Hacks: Remove the node with highest degree
+            # Avoid empty subgraph case (which is not implemented in the code)
+            max_degree = max(
+                graph_nx.degree[i]
+                for i in range(data.num_nodes)
+            )
+            node_to_delete = [
+                i
+                for i in range(data.num_nodes)
+                if graph_nx.degree[i] == max_degree
+            ]
+        else:
+            node_to_delete = set.union(*bcc_non_trivial)
+    elif policy == "in_tree":
+        bccs = list(biconnected_components(graph_nx))
+        bcc_non_trivial = [b for b in bccs if len(b)>2]
+        if len(bcc_non_trivial) == 0:
+            return set(range(data.num_nodes))
+        else:
+            node_to_delete = set(range(data.num_nodes)) - set.union(*bcc_non_trivial)
+            if len(node_to_delete) == 0:
+                # Hacks: Remove the node with minimum degree
+                # Avoid empty subgraph case (which is not implemented in the code)
+                min_degree = min(
+                    graph_nx.degree[i]
+                    for i in range(data.num_nodes)
+                )
+                node_to_delete = [
+                    i
+                    for i in range(data.num_nodes)
+                    if graph_nx.degree[i] == min_degree
+                ]
+    else:
+        raise NotImplementedError
+    
+    return node_to_delete
+
+
+class NodeLargeDegreeDeleted(NodeDeleted):
+    def select_nodes(self, data):
+        return node_selection(data, 'large_degree')
+    
+class NodeSmallDegreeDeleted(NodeDeleted):
+    def select_nodes(self, data):
+        return node_selection(data, 'small_degree')
+
+class NodeInBccDeleted(NodeDeleted):
+    def select_nodes(self, data):
+        return node_selection(data, 'in_bcc')
+    
+class NodeInTreeDeleted(NodeDeleted):
+    def select_nodes(self, data):
+        return node_selection(data, 'in_tree')
+
+class EgoLargeDegree(EgoNets):
+    def select_nodes(self, data):
+        return node_selection(data, 'large_degree')
+    
+class EgoSmallDegree(EgoNets):
+    def select_nodes(self, data):
+        return node_selection(data, 'small_degree')
+
+class EgoInBcc(EgoNets):
+    def select_nodes(self, data):
+        return node_selection(data, 'in_bcc')
+    
+class EgoNodeInTree(EgoNets):
+    def select_nodes(self, data):
+        return node_selection(data, 'in_tree')
+
+
 
 def policy2transform(policy: str, num_hops, process_subgraphs=lambda x: x, pbar=None):
     if policy == "edge_deleted":
@@ -531,6 +631,22 @@ def policy2transform(policy: str, num_hops, process_subgraphs=lambda x: x, pbar=
         return EgoNets(num_hops, process_subgraphs=process_subgraphs, pbar=pbar)
     elif policy == "ego_nets_plus":
         return EgoNets(num_hops, add_node_idx=True, process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "node_large_degree_deleted":
+        return NodeLargeDegreeDeleted(process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "node_small_degree_deleted":
+        return NodeSmallDegreeDeleted(process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "node_in_bcc_deleted":
+        return NodeInBccDeleted(process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "node_in_tree_deleted":
+        return NodeInTreeDeleted(process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "ego_nets_large_degree":
+        return EgoLargeDegree(num_hops, process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "ego_nets_small_degree":
+        return EgoSmallDegree(num_hops, process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "ego_nets_in_bcc":
+        return EgoInBcc(num_hops, process_subgraphs=process_subgraphs, pbar=pbar)
+    elif policy == "ego_nets_in_tree":
+        return EgoNodeInTree(num_hops, process_subgraphs=process_subgraphs, pbar=pbar)
     elif policy == "original":
         return process_subgraphs
 

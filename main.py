@@ -138,8 +138,8 @@ def run(args, device, fold_idx, sweep_run_name, sweep_id, results_queue):
         if scheduler is not None:
             if 'ZINC' in args.dataset:
                 scheduler.step(valid_perf[eval_metric])
-                if optimizer.param_groups[0]['lr'] < 0.00001:
-                    break
+                #if optimizer.param_groups[0]['lr'] < 0.00001:
+                #    break
             else:
                 scheduler.step()
 

@@ -1,0 +1,34 @@
+program: main.py
+method: grid
+parameters:
+  gnn_type:
+    value: 'zincgin'
+  num_layer:
+    value: 4
+  emb_dim:
+    value: 64
+  batch_size:
+    value: 128
+  learning_rate:
+    values: [0.001]
+  epochs:
+    value: 100
+  dataset:
+    value: 'ZINC'
+  jk:
+    value: 'concat'
+  drop_ratio:
+    value: 0.
+  channels:
+    values: ['96']
+  policy:
+    values: ['ego_nets_large_degree', 'ego_nets_small_degree', 'ego_nets_in_bcc', 'ego_nets_in_tree', 'node_large_degree_deleted', 'node_small_degree_deleted', 'node_in_bcc_deleted', 'node_in_tree_deleted']
+  model:
+    value: 'dss'
+  seed:
+    values: [1,2,3,4,5]
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
